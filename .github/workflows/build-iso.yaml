@@ -31,7 +31,7 @@ jobs:
           --name parrot-build \
           -v ${{ github.workspace }}:/workspace \
           -w /workspace \
-          parrotsec/parrot-core:latest \
+          parrotsec/core:latest \
           bash -c "
             # Update package lists
             apt-get update
