@@ -22,7 +22,7 @@ jobs:
       
     - name: Pull Parrot OS Docker image
       run: |
-        docker pull parrotsec/parrot-core:latest
+        docker pull parrotsec/core:latest
         
     - name: Build ISO in Parrot OS container
       run: |
