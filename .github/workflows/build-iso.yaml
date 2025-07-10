@@ -1,0 +1,122 @@
+name: Build Parrot OS ISO
+
+on:
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Enable debug mode'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build-iso:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Pull Parrot OS Docker image
+      run: |
+        docker pull parrotsec/parrot-core:latest
+        
+    - name: Build ISO in Parrot OS container
+      run: |
+        docker run --rm \
+          --privileged \
+          --name parrot-build \
+          -v ${{ github.workspace }}:/workspace \
+          -w /workspace \
+          parrotsec/parrot-core:latest \
+          bash -c "
+            # Update package lists
+            apt-get update
+            
+            # Install required dependencies
+            apt-get install -y \
+              live-build \
+              debootstrap \
+              parrot-archive-keyring \
+              debian-archive-keyring \
+              xorriso \
+              isolinux \
+              syslinux-utils \
+              genisoimage \
+              memtest86+ \
+              rsync \
+              git \
+              build-essential \
+              sudo \
+              wget \
+              curl
+            
+            # Make build script executable
+            chmod +x build.sh
+            
+            # Build the ISO with specific parameters
+            ./build.sh \
+              --live \
+              --variant home-kde \
+              --arch amd64 \
+              --distribution parrot \
+              --version \$(date +%Y.%m.%d) \
+              ${{ github.event.inputs.debug == 'true' && '--debug' || '' }} \
+              --verbose
+          "
+    
+    - name: List generated files
+      run: |
+        echo "Generated files:"
+        find . -name "*.iso" -o -name "*.img" -o -name "*.hybrid" | head -20
+        ls -la dist/ || echo "No dist directory found"
+        ls -la images/ || echo "No images directory found"
+        ls -la . | grep -E "\.(iso|img|hybrid)$" || echo "No ISO files found in root"
+        
+    - name: Find and prepare ISO for upload
+      id: find-iso
+      run: |
+        # Find the generated ISO file
+        ISO_FILE=$(find . -name "*.iso" -type f | head -1)
+        if [ -n "$ISO_FILE" ]; then
+          echo "Found ISO: $ISO_FILE"
+          echo "iso_path=$ISO_FILE" >> $GITHUB_OUTPUT
+          echo "iso_name=$(basename $ISO_FILE)" >> $GITHUB_OUTPUT
+          echo "iso_size=$(du -h $ISO_FILE | cut -f1)" >> $GITHUB_OUTPUT
+        else
+          echo "No ISO file found!"
+          exit 1
+        fi
+        
+    - name: Upload ISO artifact
+      if: steps.find-iso.outputs.iso_path
+      uses: actions/upload-artifact@v4
+      with:
+        name: parrot-home-kde-iso
+        path: ${{ steps.find-iso.outputs.iso_path }}
+        retention-days: 30
+        
+    - name: Generate build summary
+      if: always()
+      run: |
+        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Variant**: home-kde" >> $GITHUB_STEP_SUMMARY
+        echo "- **Architecture**: amd64" >> $GITHUB_STEP_SUMMARY
+        echo "- **Image Type**: live" >> $GITHUB_STEP_SUMMARY
+        if [ -n "${{ steps.find-iso.outputs.iso_name }}" ]; then
+          echo "- **ISO Name**: ${{ steps.find-iso.outputs.iso_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **ISO Size**: ${{ steps.find-iso.outputs.iso_size }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ✅ Build successful" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- **Status**: ❌ Build failed" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+    - name: Clean up
+      if: always()
+      run: |
+        # Clean up any temporary files to free space
+        docker system prune -f || true
+        rm -rf /tmp/* || true
