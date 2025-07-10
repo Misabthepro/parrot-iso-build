@@ -1,6 +1,10 @@
 name: Build Parrot OS ISO
 
 on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
     inputs:
       debug:
@@ -24,6 +28,48 @@ jobs:
       run: |
         docker pull parrotsec/core:latest
         
+    - name: Create build script
+      run: |
+        cat > build_in_container.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        # Update package lists
+        apt-get update
+        
+        # Install required dependencies
+        apt-get install -y \
+          live-build \
+          debootstrap \
+          parrot-archive-keyring \
+          debian-archive-keyring \
+          xorriso \
+          isolinux \
+          syslinux-utils \
+          genisoimage \
+          memtest86+ \
+          rsync \
+          git \
+          build-essential \
+          sudo \
+          wget \
+          curl
+        
+        # Make build script executable
+        chmod +x build.sh
+        
+        # Build the ISO with specific parameters
+        ./build.sh \
+          --live \
+          --variant home-kde \
+          --arch amd64 \
+          --distribution parrot \
+          --version $(date +%Y.%m.%d) \
+          --verbose
+        EOF
+        
+        chmod +x build_in_container.sh
+        
     - name: Build ISO in Parrot OS container
       run: |
         docker run --rm \
@@ -32,41 +78,61 @@ jobs:
           -v ${{ github.workspace }}:/workspace \
           -w /workspace \
           parrotsec/core:latest \
-          bash -c "
-            # Update package lists
-            apt-get update
-            
-            # Install required dependencies
-            apt-get install -y \
-              live-build \
-              debootstrap \
-              parrot-archive-keyring \
-              debian-archive-keyring \
-              xorriso \
-              isolinux \
-              syslinux-utils \
-              genisoimage \
-              memtest86+ \
-              rsync \
-              git \
-              build-essential \
-              sudo \
-              wget \
-              curl
-            
-            # Make build script executable
-            chmod +x build.sh
-            
-            # Build the ISO with specific parameters
-            ./build.sh \
-              --live \
-              --variant home-kde \
-              --arch amd64 \
-              --distribution parrot \
-              --version \$(date +%Y.%m.%d) \
-              ${{ github.event.inputs.debug == 'true' && '--debug' || '' }} \
-              --verbose
-          "
+          ./build_in_container.sh
+          
+    - name: Add debug mode support
+      if: github.event.inputs.debug == 'true'
+      run: |
+        # Recreate build script with debug flag
+        cat > build_in_container.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        # Update package lists
+        apt-get update
+        
+        # Install required dependencies
+        apt-get install -y \
+          live-build \
+          debootstrap \
+          parrot-archive-keyring \
+          debian-archive-keyring \
+          xorriso \
+          isolinux \
+          syslinux-utils \
+          genisoimage \
+          memtest86+ \
+          rsync \
+          git \
+          build-essential \
+          sudo \
+          wget \
+          curl
+        
+        # Make build script executable
+        chmod +x build.sh
+        
+        # Build the ISO with specific parameters and debug mode
+        ./build.sh \
+          --live \
+          --variant home-kde \
+          --arch amd64 \
+          --distribution parrot \
+          --version $(date +%Y.%m.%d) \
+          --debug \
+          --verbose
+        EOF
+        
+        chmod +x build_in_container.sh
+        
+        # Run with debug
+        docker run --rm \
+          --privileged \
+          --name parrot-build-debug \
+          -v ${{ github.workspace }}:/workspace \
+          -w /workspace \
+          parrotsec/core:latest \
+          ./build_in_container.sh
     
     - name: List generated files
       run: |
